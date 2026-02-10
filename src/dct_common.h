@@ -2,7 +2,9 @@
 
 #include "configuration.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <utility>
 
 inline constexpr float PI_F = 3.14159265358979323846f;
@@ -21,10 +23,12 @@ struct CosineTable {
 inline const CosineTable &get_cosine_table() {
     static const CosineTable table = [] {
         CosineTable cosine_table{};
-        for (int i = 0; i < 8; ++i)
-            for (int j = 0; j < 8; ++j)
+        for (int i = 0; i < 8; ++i) {
+            for (int j = 0; j < 8; ++j) {
                 cosine_table.data[i][j] = std::cos(
                     (2.0f * static_cast<float>(i) + 1.0f) * static_cast<float>(j) * PI_F / 16.0f);
+            }
+        }
         return cosine_table;
     }();
     return table;
@@ -34,35 +38,55 @@ constexpr float alpha_f(const int u) {
     return u == 0 ? 0.70710678118654752f : 1.0f;
 }
 
-struct EncoderBasisTables {
-    float dc_image[8][8];
-    float embed_basis[4][8][8];
+struct PrecomputedBlocks {
+    static constexpr int NUM_PATTERNS = 1 << BITS_PER_BLOCK;
+    uint8_t patterns[NUM_PATTERNS][8][8];
 };
 
-inline const EncoderBasisTables &get_encoder_basis_tables() {
-    static const EncoderBasisTables tables = [] {
-        EncoderBasisTables encoder_basis_tables{};
+inline const PrecomputedBlocks &get_precomputed_blocks() {
+    static const PrecomputedBlocks blocks = [] {
+        PrecomputedBlocks result{};
         const auto &[data] = get_cosine_table();
+
         constexpr float dc_value = 0.25f * alpha_f(0) * alpha_f(0) * 64.0f * 128.0f;
+
+        float dc_image[8][8];
         for (int x = 0; x < 8; ++x) {
             for (int y = 0; y < 8; ++y) {
-                encoder_basis_tables.dc_image[x][y] = 0.25f * alpha_f(0) * alpha_f(0) * dc_value
-                                                      * data[x][0] * data[y][0];
+                dc_image[x][y] = 0.25f * alpha_f(0) * alpha_f(0) * dc_value
+                                 * data[x][0] * data[y][0];
             }
         }
+
+        float embed_basis[4][8][8]{};
         for (int b = 0; b < BITS_PER_BLOCK; ++b) {
             const auto [u, v] = EMBED_POSITIONS[b];
             const float scale = 0.25f * alpha_f(u) * alpha_f(v)
                                 * static_cast<float>(COEFFICIENT_STRENGTH);
             for (int x = 0; x < 8; ++x) {
                 for (int y = 0; y < 8; ++y) {
-                    encoder_basis_tables.embed_basis[b][x][y] = scale * data[x][u] * data[y][v];
+                    embed_basis[b][x][y] = scale * data[x][u] * data[y][v];
                 }
             }
         }
-        return encoder_basis_tables;
+
+        for (int pattern = 0; pattern < PrecomputedBlocks::NUM_PATTERNS; ++pattern) {
+            for (int y = 0; y < 8; ++y) {
+                for (int x = 0; x < 8; ++x) {
+                    float val = dc_image[y][x];
+                    for (int b = 0; b < BITS_PER_BLOCK; ++b) {
+                        const int bit = (pattern >> (BITS_PER_BLOCK - 1 - b)) & 1;
+                        val += (bit ? 1.0f : -1.0f) * embed_basis[b][y][x];
+                    }
+                    val = std::clamp(val, 0.0f, 255.0f);
+                    result.patterns[pattern][y][x] = static_cast<uint8_t>(val);
+                }
+            }
+        }
+
+        return result;
     }();
-    return tables;
+    return blocks;
 }
 
 struct DecoderProjections {
@@ -84,28 +108,4 @@ inline const DecoderProjections &get_decoder_projections() {
         return decoder_projections;
     }();
     return proj;
-}
-
-inline void forward_dct_8x8(const float input[8][8], float output[8][8]) {
-    const auto &[data] = get_cosine_table();
-    float temp[8][8];
-    for (int x = 0; x < 8; ++x) {
-        for (int v = 0; v < 8; ++v) {
-            float sum = 0.0f;
-            for (int y = 0; y < 8; ++y) {
-                sum += input[x][y] * data[y][v];
-            }
-            temp[x][v] = sum;
-        }
-    }
-    for (int u = 0; u < 8; ++u) {
-        const float au = alpha_f(u);
-        for (int v = 0; v < 8; ++v) {
-            float sum = 0.0f;
-            for (int x = 0; x < 8; ++x) {
-                sum += temp[x][v] * data[x][u];
-            }
-            output[u][v] = 0.25f * au * alpha_f(v) * sum;
-        }
-    }
 }

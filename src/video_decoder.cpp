@@ -110,43 +110,46 @@ std::vector<std::byte> VideoDecoder::extract_data_from_frame() const {
     const auto layout = compute_frame_layout();
     const auto &[vectors] = get_decoder_projections();
 
-    const int total_blocks = layout.blocks_per_row * layout.blocks_per_col;
-    const std::size_t total_bits = static_cast<std::size_t>(total_blocks) * BITS_PER_BLOCK;
-    const std::size_t total_bytes = total_bits / 8;
+    const int blocks_per_row = layout.blocks_per_row;
+    const int total_blocks = layout.total_blocks;
+    constexpr int blocks_per_byte = 8 / BITS_PER_BLOCK;
+
+    const int total_bytes = total_blocks / blocks_per_byte;
 
     std::vector data(total_bytes, std::byte{0});
     auto *out = reinterpret_cast<uint8_t *>(data.data());
 
 #pragma omp parallel for schedule(static)
-    for (int block_idx = 0; block_idx < total_blocks; ++block_idx) {
-        const int block_row = block_idx / layout.blocks_per_row;
-        const int block_col = block_idx % layout.blocks_per_row;
-        const int base_x = block_col * 8;
-        const int base_y = block_row * 8;
+    for (int byte_idx = 0; byte_idx < total_bytes; ++byte_idx) {
+        uint8_t current_byte = 0;
 
-        float block_flat[64];
-        for (int y = 0; y < 8; ++y) {
-            const int row_offset = (base_y + y) * FRAME_WIDTH + base_x;
-            for (int x = 0; x < 8; ++x) {
-                block_flat[y * 8 + x] = static_cast<float>(
-                    gray_buffer_[row_offset + x]);
+        for (int sub = 0; sub < blocks_per_byte; ++sub) {
+            const int block_idx = byte_idx * blocks_per_byte + sub;
+            const int block_row = block_idx / blocks_per_row;
+            const int block_col = block_idx % blocks_per_row;
+            const int base_x = block_col * 8;
+            const int base_y = block_row * 8;
+
+            float block_flat[64];
+            for (int y = 0; y < 8; ++y) {
+                const int row_offset = (base_y + y) * FRAME_WIDTH + base_x;
+                for (int x = 0; x < 8; ++x) {
+                    block_flat[y * 8 + x] = static_cast<float>(
+                        gray_buffer_[row_offset + x]);
+                }
+            }
+
+            for (int b = 0; b < BITS_PER_BLOCK; ++b) {
+                float sum = 0.0f;
+                const float *pv = vectors[b];
+                for (int i = 0; i < 64; ++i) {
+                    sum += block_flat[i] * pv[i];
+                }
+                current_byte = (current_byte << 1) | (sum > 0.0f ? 1 : 0);
             }
         }
 
-        const std::size_t bit_start = static_cast<std::size_t>(block_idx) * BITS_PER_BLOCK;
-        for (int b = 0; b < BITS_PER_BLOCK; ++b) {
-            float sum = 0.0f;
-            const float *pv = vectors[b];
-            for (int i = 0; i < 64; ++i)
-                sum += block_flat[i] * pv[i];
-            const std::size_t bit_index = bit_start + b;
-            const std::size_t byte_idx = bit_index / 8;
-            const int bit_pos = 7 - static_cast<int>(bit_index % 8);
-            if (sum > 0.0f) {
-#pragma omp atomic
-                out[byte_idx] |= static_cast<uint8_t>(1 << bit_pos);
-            }
-        }
+        out[byte_idx] = current_byte;
     }
 
     return data;

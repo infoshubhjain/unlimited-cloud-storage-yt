@@ -42,16 +42,12 @@ uint32_t crc32c(const std::span<const std::byte> data, const uint32_t seed) {
             static_cast<uint8_t>((seed >> 16) & 0xFFu),
             static_cast<uint8_t>((seed >> 24) & 0xFFu)
         };
-        std::vector<uint8_t> combinedBuffer;
-        combinedBuffer.reserve(4 + data.size());
-        combinedBuffer.insert(combinedBuffer.end(), seedBytes, seedBytes + 4);
-
-        const auto inputDataPointer = reinterpret_cast<const uint8_t *>(data.data());
-        combinedBuffer.insert(combinedBuffer.end(), inputDataPointer, inputDataPointer + data.size());
-
-        return CRC::Calculate(combinedBuffer.data(), combinedBuffer.size(), CRC::CRC_32_MPEG2());
+        const auto &table = CRC::CRC_32_MPEG2();
+        uint32_t crc = CRC::Calculate(seedBytes, 4, table);
+        crc = CRC::Calculate(data.data(),
+                             data.size(), table, crc);
+        return crc;
     }
-
     const auto dataPointer = reinterpret_cast<const uint8_t *>(data.data());
     return CRC::Calculate(dataPointer, data.size(), CRC::CRC_32_MPEG2());
 }
@@ -59,31 +55,34 @@ uint32_t crc32c(const std::span<const std::byte> data, const uint32_t seed) {
 uint32_t crc32c_concat(const std::span<const std::byte> first,
                        const std::span<const std::byte> second,
                        uint32_t /*unused_seed*/) {
-    std::vector<uint8_t> combinedBuffer;
-    combinedBuffer.reserve(first.size() + second.size());
-
-    const auto firstStart = reinterpret_cast<const uint8_t *>(first.data());
-    combinedBuffer.insert(combinedBuffer.end(), firstStart, firstStart + first.size());
-
-    const auto secondStart = reinterpret_cast<const uint8_t *>(second.data());
-    combinedBuffer.insert(combinedBuffer.end(), secondStart, secondStart + second.size());
-
-    return CRC::Calculate(combinedBuffer.data(), combinedBuffer.size(), CRC::CRC_32_MPEG2());
+    const auto &table = CRC::CRC_32_MPEG2();
+    uint32_t crc = CRC::Calculate(first.data(),
+                                  first.size(), table);
+    crc = CRC::Calculate(second.data(),
+                         second.size(), table, crc);
+    return crc;
 }
 
 uint32_t packet_crc32c(std::span<const std::byte> header,
                        const std::span<const std::byte> payload,
                        const std::size_t crc_offset,
                        const std::size_t crc_size) {
-    std::vector<std::byte> headerCopy(header.begin(), header.end());
-    if (crc_size == 4 && crc_offset + 4 <= headerCopy.size()) {
-        headerCopy[crc_offset + 0] = std::byte{0};
-        headerCopy[crc_offset + 1] = std::byte{0};
-        headerCopy[crc_offset + 2] = std::byte{0};
-        headerCopy[crc_offset + 3] = std::byte{0};
+    const auto &table = CRC::CRC_32_MPEG2();
+    const auto *hdr = reinterpret_cast<const uint8_t *>(header.data());
+    uint32_t crc = CRC::Calculate(hdr, crc_offset, table);
+    if (crc_size == 4) {
+        constexpr uint8_t zeros[4] = {0, 0, 0, 0};
+        crc = CRC::Calculate(zeros, 4, table, crc);
     }
 
-    return crc32c_concat(headerCopy, payload);
+    if (const std::size_t after_crc = crc_offset + crc_size; after_crc < header.size()) {
+        crc = CRC::Calculate(hdr + after_crc, header.size() - after_crc, table, crc);
+    }
+
+    crc = CRC::Calculate(payload.data(),
+                         payload.size(), table, crc);
+
+    return crc;
 }
 
 uint32_t read_u32_le(const std::span<const std::byte> buffer, const std::size_t byteOffset) {

@@ -73,12 +73,8 @@ void VideoEncoder::init_encoder(const std::string &output_path) {
     const AVPixelFormat *pix_fmts = nullptr;
     int num_pix_fmts = 0;
     ret = avcodec_get_supported_config(
-        codec_ctx,
-        codec,
-        AV_CODEC_CONFIG_PIX_FORMAT,
-        0,
-        reinterpret_cast<const void **>(&pix_fmts),
-        &num_pix_fmts
+        codec_ctx, codec, AV_CODEC_CONFIG_PIX_FORMAT, 0,
+        reinterpret_cast<const void **>(&pix_fmts), &num_pix_fmts
     );
 
     if (ret >= 0 && pix_fmts) {
@@ -164,7 +160,7 @@ int VideoEncoder::packets_per_frame() {
 
 void VideoEncoder::embed_data_in_frame(const std::vector<std::byte> &data) {
     const auto layout = compute_frame_layout();
-    const auto &[dc_image, embed_basis] = get_encoder_basis_tables();
+    const auto &[patterns] = get_precomputed_blocks();
     std::memset(gray_buffer.data(), 128, gray_buffer.size());
 
     const std::size_t total_bits = data.size() * 8;
@@ -173,43 +169,33 @@ void VideoEncoder::embed_data_in_frame(const std::vector<std::byte> &data) {
         std::min(static_cast<std::size_t>(total_blocks),
                  (total_bits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK));
     const auto *src = reinterpret_cast<const uint8_t *>(data.data());
+    const int blocks_per_row = layout.blocks_per_row;
 
 #pragma omp parallel for schedule(static)
     for (int block_idx = 0; block_idx < active_blocks; ++block_idx) {
-        const int block_row = block_idx / layout.blocks_per_row;
-        const int block_col = block_idx % layout.blocks_per_row;
+        const int block_row = block_idx / blocks_per_row;
+        const int block_col = block_idx % blocks_per_row;
         const int base_x = block_col * 8;
         const int base_y = block_row * 8;
+
         const std::size_t bit_start = static_cast<std::size_t>(block_idx) * BITS_PER_BLOCK;
         const std::size_t bit_end = std::min(bit_start + BITS_PER_BLOCK, total_bits);
 
-        float pixels[8][8];
-        for (int y = 0; y < 8; ++y) {
-            for (int x = 0; x < 8; ++x) {
-                pixels[y][x] = dc_image[y][x];
-            }
-        }
-
+        int pattern = 0;
         for (std::size_t bit_index = bit_start; bit_index < bit_end; ++bit_index) {
             const std::size_t byte_idx = bit_index / 8;
-            const std::size_t bit_pos = 7 - (bit_index % 8);
+            const int bit_pos = 7 - static_cast<int>(bit_index % 8);
             const int bit = (src[byte_idx] >> bit_pos) & 1;
-            const int b = static_cast<int>(bit_index - bit_start);
-            const float sign = bit ? 1.0f : -1.0f;
-            for (int y = 0; y < 8; ++y) {
-                for (int x = 0; x < 8; ++x) {
-                    pixels[y][x] += sign * embed_basis[b][y][x];
-                }
-            }
+            pattern = (pattern << 1) | bit;
         }
 
+        const int bits_extracted = static_cast<int>(bit_end - bit_start);
+        pattern <<= (BITS_PER_BLOCK - bits_extracted);
+
+        const auto &block = patterns[pattern];
         for (int y = 0; y < 8; ++y) {
-            const int row_offset = (base_y + y) * FRAME_WIDTH + base_x;
-            for (int x = 0; x < 8; ++x) {
-                float val = pixels[y][x];
-                val = val < 0.0f ? 0.0f : (val > 255.0f ? 255.0f : val);
-                gray_buffer[row_offset + x] = static_cast<uint8_t>(val);
-            }
+            std::memcpy(&gray_buffer[(base_y + y) * FRAME_WIDTH + base_x],
+                        block[y], 8);
         }
     }
 
