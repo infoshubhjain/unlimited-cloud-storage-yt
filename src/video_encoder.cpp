@@ -1,70 +1,10 @@
 #include "video_encoder.h"
 #include "configuration.h"
+#include "dct_common.h"
 
 #include <algorithm>
-#include <array>
 #include <iostream>
 #include <stdexcept>
-#include <cstring>
-
-constexpr double PI = 3.14159265358979323846;
-
-static const auto &get_cosine_table() {
-    static std::array<std::array<double, 8>, 8> table = [] {
-        std::array<std::array<double, 8>, 8> t{};
-        for (int i = 0; i < 8; ++i) {
-            for (int j = 0; j < 8; ++j) {
-                t[i][j] = std::cos((2.0 * i + 1.0) * j * PI / 16.0);
-            }
-        }
-        return t;
-    }();
-    return table;
-}
-
-static double alpha(int u) {
-    return u == 0 ? 1.0 / std::sqrt(2.0) : 1.0;
-}
-
-static void forward_dct_8x8(const double input[8][8], double output[8][8]) {
-    const auto &cos_table = get_cosine_table();
-    for (int u = 0; u < 8; ++u) {
-        for (int v = 0; v < 8; ++v) {
-            double sum = 0.0;
-            for (int x = 0; x < 8; ++x) {
-                for (int y = 0; y < 8; ++y) {
-                    sum += input[x][y] * cos_table[x][u] * cos_table[y][v];
-                }
-            }
-            output[u][v] = 0.25 * alpha(u) * alpha(v) * sum;
-        }
-    }
-}
-
-static void inverse_dct_8x8(const double input[8][8], double output[8][8]) {
-    const auto &cos_table = get_cosine_table();
-    for (int x = 0; x < 8; ++x) {
-        for (int y = 0; y < 8; ++y) {
-            double sum = 0.0;
-            for (int u = 0; u < 8; ++u) {
-                for (int v = 0; v < 8; ++v) {
-                    sum += alpha(u) * alpha(v) * input[u][v]
-                            * cos_table[x][u] * cos_table[y][v];
-                }
-            }
-            output[x][y] = 0.25 * sum;
-        }
-    }
-}
-
-static constexpr std::pair<int, int> EMBED_POSITIONS[] = {
-    {0, 1},
-    {1, 0},
-    {1, 1},
-    {0, 2},
-};
-
-static_assert(BITS_PER_BLOCK <= 4, "Max 4 bits per block");
 
 FrameLayout compute_frame_layout() {
     FrameLayout layout{};
@@ -128,30 +68,29 @@ void VideoEncoder::init_encoder(const std::string &output_path) {
     codec_ctx->framerate = {FRAME_FPS, 1};
     codec_ctx->gop_size = 30;
     codec_ctx->max_b_frames = 0;
-    if (VIDEO_CODEC == "libx264") {
-        codec_ctx->pix_fmt = AV_PIX_FMT_YUV444P;
-        av_opt_set(codec_ctx->priv_data, "preset", "ultrafast", 0);
-        av_opt_set(codec_ctx->priv_data, "crf", "0", 0); // Lossless
-    } else if (VIDEO_CODEC == "libx265") {
-        codec_ctx->pix_fmt = AV_PIX_FMT_GRAY8;
-        av_opt_set(codec_ctx->priv_data, "preset", "ultrafast", 0);
-        av_opt_set(codec_ctx->priv_data, "x265-params", "lossless=1", 0);
-    } else if (VIDEO_CODEC == "ffv1") {
-        codec_ctx->pix_fmt = AV_PIX_FMT_GRAY8;
-    } else {
-        codec_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
-    }
+    codec_ctx->pix_fmt = AV_PIX_FMT_GRAY8;
 
-    if (codec->pix_fmts) {
-        bool format_supported = false;
-        for (const AVPixelFormat *p = codec->pix_fmts; *p != AV_PIX_FMT_NONE; ++p) {
-            if (*p == codec_ctx->pix_fmt) {
-                format_supported = true;
+    const AVPixelFormat *pix_fmts = nullptr;
+    int num_pix_fmts = 0;
+    ret = avcodec_get_supported_config(
+        codec_ctx,
+        codec,
+        AV_CODEC_CONFIG_PIX_FORMAT,
+        0,
+        reinterpret_cast<const void **>(&pix_fmts),
+        &num_pix_fmts
+    );
+
+    if (ret >= 0 && pix_fmts) {
+        bool supported = false;
+        for (int i = 0; i < num_pix_fmts; ++i) {
+            if (pix_fmts[i] == codec_ctx->pix_fmt) {
+                supported = true;
                 break;
             }
         }
-        if (!format_supported) {
-            codec_ctx->pix_fmt = codec->pix_fmts[0];
+        if (!supported && num_pix_fmts > 0) {
+            codec_ctx->pix_fmt = pix_fmts[0];
             std::cerr << "[VideoEncoder] Requested format not supported, using: "
                     << codec_ctx->pix_fmt << "\n";
         }
@@ -225,41 +164,51 @@ int VideoEncoder::packets_per_frame() {
 
 void VideoEncoder::embed_data_in_frame(const std::vector<std::byte> &data) {
     const auto layout = compute_frame_layout();
-    std::ranges::fill(gray_buffer, 128);
-    std::size_t bit_index = 0;
+    const auto &[dc_image, embed_basis] = get_encoder_basis_tables();
+    std::memset(gray_buffer.data(), 128, gray_buffer.size());
+
     const std::size_t total_bits = data.size() * 8;
-    for (int block_row = 0; block_row < layout.blocks_per_col && bit_index < total_bits; ++block_row) {
-        for (int block_col = 0; block_col < layout.blocks_per_row && bit_index < total_bits; ++block_col) {
-            double block[8][8];
-            const int base_x = block_col * 8;
-            const int base_y = block_row * 8;
+    const int total_blocks = layout.blocks_per_row * layout.blocks_per_col;
+    const int active_blocks = static_cast<int>(
+        std::min(static_cast<std::size_t>(total_blocks),
+                 (total_bits + BITS_PER_BLOCK - 1) / BITS_PER_BLOCK));
+    const auto *src = reinterpret_cast<const uint8_t *>(data.data());
 
+#pragma omp parallel for schedule(static)
+    for (int block_idx = 0; block_idx < active_blocks; ++block_idx) {
+        const int block_row = block_idx / layout.blocks_per_row;
+        const int block_col = block_idx % layout.blocks_per_row;
+        const int base_x = block_col * 8;
+        const int base_y = block_row * 8;
+        const std::size_t bit_start = static_cast<std::size_t>(block_idx) * BITS_PER_BLOCK;
+        const std::size_t bit_end = std::min(bit_start + BITS_PER_BLOCK, total_bits);
+
+        float pixels[8][8];
+        for (int y = 0; y < 8; ++y) {
+            for (int x = 0; x < 8; ++x) {
+                pixels[y][x] = dc_image[y][x];
+            }
+        }
+
+        for (std::size_t bit_index = bit_start; bit_index < bit_end; ++bit_index) {
+            const std::size_t byte_idx = bit_index / 8;
+            const std::size_t bit_pos = 7 - (bit_index % 8);
+            const int bit = (src[byte_idx] >> bit_pos) & 1;
+            const int b = static_cast<int>(bit_index - bit_start);
+            const float sign = bit ? 1.0f : -1.0f;
             for (int y = 0; y < 8; ++y) {
                 for (int x = 0; x < 8; ++x) {
-                    block[y][x] = static_cast<double>(gray_buffer[(base_y + y) * FRAME_WIDTH + base_x + x]);
+                    pixels[y][x] += sign * embed_basis[b][y][x];
                 }
             }
+        }
 
-            double dct[8][8];
-            forward_dct_8x8(block, dct);
-
-            for (int b = 0; b < BITS_PER_BLOCK && bit_index < total_bits; ++b) {
-                const std::size_t byte_idx = bit_index / 8;
-                const std::size_t bit_pos = 7 - (bit_index % 8);
-                const int bit = (static_cast<uint8_t>(data[byte_idx]) >> bit_pos) & 1;
-                const auto [coef_y, coef_x] = EMBED_POSITIONS[b];
-                dct[coef_y][coef_x] = bit ? COEFFICIENT_STRENGTH : -COEFFICIENT_STRENGTH;
-                ++bit_index;
-            }
-
-            double reconstructed[8][8];
-            inverse_dct_8x8(dct, reconstructed);
-            for (int y = 0; y < 8; ++y) {
-                for (int x = 0; x < 8; ++x) {
-                    double val = reconstructed[y][x];
-                    val = std::clamp(val, 0.0, 255.0);
-                    gray_buffer[(base_y + y) * FRAME_WIDTH + base_x + x] = static_cast<uint8_t>(val);
-                }
+        for (int y = 0; y < 8; ++y) {
+            const int row_offset = (base_y + y) * FRAME_WIDTH + base_x;
+            for (int x = 0; x < 8; ++x) {
+                float val = pixels[y][x];
+                val = val < 0.0f ? 0.0f : (val > 255.0f ? 255.0f : val);
+                gray_buffer[row_offset + x] = static_cast<uint8_t>(val);
             }
         }
     }
@@ -291,7 +240,7 @@ void VideoEncoder::encode_frame() {
         throw std::runtime_error("Error sending frame");
     }
 
-    while (ret >= 0) {
+    while (true) {
         ret = avcodec_receive_packet(codec_ctx, av_packet);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
             break;
@@ -318,14 +267,14 @@ void VideoEncoder::add_packet(const Packet &packet) {
     }
 
     const auto layout = compute_frame_layout();
-    if (const std::size_t max_bytes = static_cast<std::size_t>(layout.bytes_per_frame);
+    if (const auto max_bytes = static_cast<std::size_t>(layout.bytes_per_frame);
         frame_data_buffer.size() + packet.bytes.size() > max_bytes) {
         flush_frame_buffer();
     }
 
     frame_data_buffer.insert(frame_data_buffer.end(),
-                              packet.bytes.begin(),
-                              packet.bytes.end());
+                             packet.bytes.begin(),
+                             packet.bytes.end());
 }
 
 void VideoEncoder::encode_packets(const std::vector<Packet> &packets) {

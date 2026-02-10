@@ -1,53 +1,9 @@
 #include "video_decoder.h"
 #include "video_encoder.h"
 #include "configuration.h"
+#include "dct_common.h"
 
-#include <array>
-#include <cmath>
-#include <cstring>
 #include <stdexcept>
-
-constexpr double PI = 3.14159265358979323846;
-
-static const auto &get_cosine_table() {
-    static std::array<std::array<double, 8>, 8> table = []() {
-        std::array<std::array<double, 8>, 8> t{};
-        for (int i = 0; i < 8; ++i) {
-            for (int j = 0; j < 8; ++j) {
-                t[i][j] = std::cos((2.0 * i + 1.0) * j * PI / 16.0);
-            }
-        }
-        return t;
-    }();
-    return table;
-}
-
-static double alpha(const int u) {
-    return u == 0 ? 1.0 / std::sqrt(2.0) : 1.0;
-}
-
-static void forward_dct_8x8(const double input[8][8], double output[8][8]) {
-    const auto &cos_table = get_cosine_table();
-    for (int u = 0; u < 8; ++u) {
-        for (int v = 0; v < 8; ++v) {
-            double sum = 0.0;
-            for (int x = 0; x < 8; ++x) {
-                for (int y = 0; y < 8; ++y) {
-                    sum += input[x][y] * cos_table[x][u] * cos_table[y][v];
-                }
-            }
-            output[u][v] = 0.25 * alpha(u) * alpha(v) * sum;
-        }
-    }
-}
-
-
-static constexpr std::pair<int, int> EMBED_POSITIONS[] = {
-    {0, 1},
-    {1, 0},
-    {1, 1},
-    {0, 2},
-};
 
 VideoDecoder::VideoDecoder(const std::string &input_path) {
     init_decoder(input_path);
@@ -152,36 +108,43 @@ int64_t VideoDecoder::total_frames() const {
 
 std::vector<std::byte> VideoDecoder::extract_data_from_frame() const {
     const auto layout = compute_frame_layout();
+    const auto &[vectors] = get_decoder_projections();
 
-    std::vector<std::byte> data;
-    data.reserve(layout.bytes_per_frame);
+    const int total_blocks = layout.blocks_per_row * layout.blocks_per_col;
+    const std::size_t total_bits = static_cast<std::size_t>(total_blocks) * BITS_PER_BLOCK;
+    const std::size_t total_bytes = total_bits / 8;
 
-    uint8_t current_byte = 0;
-    int bit_count = 0;
-    for (int block_row = 0; block_row < layout.blocks_per_col; ++block_row) {
-        for (int block_col = 0; block_col < layout.blocks_per_row; ++block_col) {
-            double block[8][8];
-            const int base_x = block_col * 8;
-            const int base_y = block_row * 8;
+    std::vector data(total_bytes, std::byte{0});
+    auto *out = reinterpret_cast<uint8_t *>(data.data());
 
-            for (int y = 0; y < 8; ++y) {
-                for (int x = 0; x < 8; ++x) {
-                    block[y][x] = static_cast<double>(gray_buffer_[(base_y + y) * FRAME_WIDTH + base_x + x]);
-                }
+#pragma omp parallel for schedule(static)
+    for (int block_idx = 0; block_idx < total_blocks; ++block_idx) {
+        const int block_row = block_idx / layout.blocks_per_row;
+        const int block_col = block_idx % layout.blocks_per_row;
+        const int base_x = block_col * 8;
+        const int base_y = block_row * 8;
+
+        float block_flat[64];
+        for (int y = 0; y < 8; ++y) {
+            const int row_offset = (base_y + y) * FRAME_WIDTH + base_x;
+            for (int x = 0; x < 8; ++x) {
+                block_flat[y * 8 + x] = static_cast<float>(
+                    gray_buffer_[row_offset + x]);
             }
+        }
 
-            double dct[8][8];
-            forward_dct_8x8(block, dct);
-            for (int b = 0; b < BITS_PER_BLOCK; ++b) {
-                const auto [coef_y, coef_x] = EMBED_POSITIONS[b];
-                const int bit = dct[coef_y][coef_x] > 0 ? 1 : 0;
-                current_byte = (current_byte << 1) | bit;
-                ++bit_count;
-                if (bit_count == 8) {
-                    data.push_back(static_cast<std::byte>(current_byte));
-                    current_byte = 0;
-                    bit_count = 0;
-                }
+        const std::size_t bit_start = static_cast<std::size_t>(block_idx) * BITS_PER_BLOCK;
+        for (int b = 0; b < BITS_PER_BLOCK; ++b) {
+            float sum = 0.0f;
+            const float *pv = vectors[b];
+            for (int i = 0; i < 64; ++i)
+                sum += block_flat[i] * pv[i];
+            const std::size_t bit_index = bit_start + b;
+            const std::size_t byte_idx = bit_index / 8;
+            const int bit_pos = 7 - static_cast<int>(bit_index % 8);
+            if (sum > 0.0f) {
+#pragma omp atomic
+                out[byte_idx] |= static_cast<uint8_t>(1 << bit_pos);
             }
         }
     }
@@ -203,9 +166,10 @@ std::vector<std::vector<std::byte> > VideoDecoder::extract_packets_from_frame() 
                 break;
             }
         }
-
-        std::vector packet(raw_data.begin() + offset,
-                           raw_data.begin() + offset + packet_size);
+        std::vector packet(
+            raw_data.begin() + static_cast<std::ptrdiff_t>(offset),
+            raw_data.begin() + static_cast<std::ptrdiff_t>(offset + packet_size)
+        );
         packets.push_back(std::move(packet));
         offset += packet_size;
     }

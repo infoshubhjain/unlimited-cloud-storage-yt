@@ -41,4 +41,9 @@ target_link_libraries(media_storage PRIVATE
         OpenMP::OpenMP_CXX
 )
 
-target_compile_options(media_storage PRIVATE -march=native)
+# Check for OpenMP
+if(MSVC)
+    target_compile_options(media_storage PRIVATE /O2 /arch:AVX2)
+else()
+    target_compile_options(media_storage PRIVATE -march=native)
+endif()
