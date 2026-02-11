@@ -64,10 +64,16 @@ target_link_libraries(media_storage_gui PRIVATE
 set_target_properties(media_storage_gui PROPERTIES AUTOMOC ON AUTOUIC ON)
 
 # Check for OpenMP
-if(MSVC)
-    target_compile_options(media_storage PRIVATE /O2 /arch:AVX2)
-    target_compile_options(media_storage_gui PRIVATE /O2 /arch:SSSE3)
-else()
+if (MSVC)
+    target_compile_options(media_storage PRIVATE
+            $<$<CONFIG:Release>:/O2>
+            /arch:AVX2
+    )
+    target_compile_options(media_storage_gui PRIVATE
+            $<$<CONFIG:Release>:/O2>
+            /arch:AVX2
+    )
+else ()
     target_compile_options(media_storage PRIVATE -march=native)
     target_compile_options(media_storage_gui PRIVATE -O2 -mssse3)
-endif()
+endif ()
