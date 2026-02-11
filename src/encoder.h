@@ -40,6 +40,7 @@ private:
     [[nodiscard]] std::vector<std::byte> create_packet_header(
         uint32_t chunk_index,
         uint32_t chunk_size,
+        uint32_t original_size,
         uint16_t symbol_size,
         uint32_t num_source,
         uint32_t block_id,

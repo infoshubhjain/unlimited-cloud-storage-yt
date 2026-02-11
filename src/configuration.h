@@ -35,6 +35,7 @@ constexpr size_t CHUNK_SIZE = 1024;
 
 constexpr uint32_t MAGIC_ID = 0x59544653;
 constexpr uint8_t VERSION_ID = 1;
+constexpr uint8_t VERSION_ID_V2 = 2;
 
 constexpr size_t MAGIC_SIZE = 4;
 constexpr size_t VERSION_SIZE = 1;
@@ -46,6 +47,7 @@ constexpr size_t SYMBOL_SIZE_SIZE = 2;
 constexpr size_t K_SIZE = 4;
 constexpr size_t ESI_SIZE = 4;
 constexpr size_t PAYLOAD_LEN_SIZE = 2;
+constexpr size_t ORIGINAL_SIZE_SIZE = 4;
 constexpr size_t CRC_SIZE = 4;
 
 constexpr size_t MAGIC_OFF = 0;
@@ -60,6 +62,11 @@ constexpr size_t ESI_OFF = K_OFF + K_SIZE;
 constexpr size_t PAYLOAD_LEN_OFF = ESI_OFF + ESI_SIZE;
 constexpr size_t CRC_OFF = PAYLOAD_LEN_OFF + PAYLOAD_LEN_SIZE;
 constexpr size_t HEADER_SIZE = CRC_OFF + CRC_SIZE;
+
+// V2 header: original_size inserted between PAYLOAD_LEN and CRC (fixes small-file padding)
+constexpr size_t ORIGINAL_SIZE_OFF = PAYLOAD_LEN_OFF + PAYLOAD_LEN_SIZE;
+constexpr size_t CRC_OFF_V2 = ORIGINAL_SIZE_OFF + ORIGINAL_SIZE_SIZE;
+constexpr size_t HEADER_SIZE_V2 = CRC_OFF_V2 + CRC_SIZE;
 
 // Frame Layout
 struct FrameLayout {

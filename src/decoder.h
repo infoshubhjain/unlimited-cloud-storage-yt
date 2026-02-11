@@ -18,6 +18,7 @@ struct PacketHeader {
     std::array<std::byte, 16> file_id{};
     uint32_t chunk_index = 0;
     uint32_t chunk_size = 0;
+    uint32_t original_size = 0;  // v2 only; equals chunk_size for v1
     uint16_t symbol_size = 0;
     uint32_t k = 0; // num source symbols
     uint32_t esi = 0; // encoding symbol id (block id)

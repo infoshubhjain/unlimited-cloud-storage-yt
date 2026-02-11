@@ -142,8 +142,17 @@ std::optional<DecodedPacket> Decoder::parse_packet(const std::span<const std::by
         return std::nullopt;
     }
 
+    const uint8_t version = readByte(packet_data, VERSION_OFF);
+    const size_t header_size = (version == VERSION_ID_V2) ? HEADER_SIZE_V2 : HEADER_SIZE;
+    if (version != VERSION_ID && version != VERSION_ID_V2) {
+        return std::nullopt;
+    }
+    if (packet_data.size() < header_size) {
+        return std::nullopt;
+    }
+
     DecodedPacket result;
-    auto &[magic, version, flags, file_id, chunk_index, chunk_size, symbol_size, k, esi, payload_len, crc] =
+    auto &[magic, v, flags, file_id, chunk_index, chunk_size, original_size, symbol_size, k, esi, payload_len, crc] =
             result.header;
 
     magic = readU32LE(packet_data, MAGIC_OFF);
@@ -151,27 +160,28 @@ std::optional<DecodedPacket> Decoder::parse_packet(const std::span<const std::by
         return std::nullopt;
     }
 
-    version = readByte(packet_data, VERSION_OFF);
-    if (version != VERSION_ID) {
-        return std::nullopt;
-    }
-
+    v = version;
     flags = readByte(packet_data, FLAGS_OFF);
 
     std::memcpy(file_id.data(), packet_data.data() + FILE_ID_OFF, FILE_ID_SIZE);
     chunk_index = readU32LE(packet_data, CHUNK_INDEX_OFF);
     chunk_size = readU32LE(packet_data, CHUNK_SIZE_OFF);
+    if (version == VERSION_ID_V2) {
+        original_size = readU32LE(packet_data, ORIGINAL_SIZE_OFF);
+    } else {
+        original_size = chunk_size;
+    }
     symbol_size = readU16LE(packet_data, SYMBOL_SIZE_OFF);
     k = readU32LE(packet_data, K_OFF);
     esi = readU32LE(packet_data, ESI_OFF);
     payload_len = readU16LE(packet_data, PAYLOAD_LEN_OFF);
-    crc = readU32LE(packet_data, CRC_OFF);
+    crc = readU32LE(packet_data, (version == VERSION_ID_V2) ? CRC_OFF_V2 : CRC_OFF);
 
-    if (const size_t expected_total = HEADER_SIZE + symbol_size; packet_data.size() < expected_total) {
+    if (const size_t expected_total = header_size + symbol_size; packet_data.size() < expected_total) {
         return std::nullopt;
     }
     result.payload.resize(symbol_size);
-    std::memcpy(result.payload.data(), packet_data.data() + HEADER_SIZE, symbol_size);
+    std::memcpy(result.payload.data(), packet_data.data() + header_size, symbol_size);
 
     return result;
 }
@@ -181,22 +191,36 @@ bool Decoder::validate_raw_packet_crc(const std::span<const std::byte> packet_da
         return false;
     }
 
-    const uint16_t symbol_size = readU16LE(packet_data, SYMBOL_SIZE_OFF);
-    if (packet_data.size() < HEADER_SIZE + symbol_size) {
+    const uint8_t version = readByte(packet_data, VERSION_OFF);
+    const size_t header_size = (version == VERSION_ID_V2) ? HEADER_SIZE_V2 : HEADER_SIZE;
+    const size_t crc_offset = (version == VERSION_ID_V2) ? CRC_OFF_V2 : CRC_OFF;
+    if (version != VERSION_ID && version != VERSION_ID_V2) {
+        return false;
+    }
+    if (packet_data.size() < header_size) {
         return false;
     }
 
-    const uint32_t stored_crc = readU32LE(packet_data, CRC_OFF);
+    const uint16_t symbol_size = readU16LE(packet_data, SYMBOL_SIZE_OFF);
+    if (packet_data.size() < header_size + symbol_size) {
+        return false;
+    }
 
-    const auto header_span = packet_data.subspan(0, HEADER_SIZE);
-    const auto payload_span = packet_data.subspan(HEADER_SIZE, symbol_size);
-    const uint32_t computed_crc = packet_crc32c(header_span, payload_span, CRC_OFF, CRC_SIZE);
+    const uint32_t stored_crc = readU32LE(packet_data, crc_offset);
+
+    const auto header_span = packet_data.subspan(0, header_size);
+    const auto payload_span = packet_data.subspan(header_size, symbol_size);
+    const uint32_t computed_crc = packet_crc32c(header_span, payload_span, crc_offset, CRC_SIZE);
 
     return stored_crc == computed_crc;
 }
 
 bool Decoder::validate_packet_crc(const DecodedPacket &packet) {
-    std::vector<std::byte> header(HEADER_SIZE);
+    const bool is_v2 = (packet.header.version == VERSION_ID_V2);
+    const size_t header_size = is_v2 ? HEADER_SIZE_V2 : HEADER_SIZE;
+    const size_t crc_offset = is_v2 ? CRC_OFF_V2 : CRC_OFF;
+
+    std::vector<std::byte> header(header_size);
     const std::span buf(header.data(), header.size());
 
     std::memcpy(buf.data() + MAGIC_OFF, &packet.header.magic, sizeof(packet.header.magic));
@@ -209,6 +233,11 @@ bool Decoder::validate_packet_crc(const DecodedPacket &packet) {
 
     const uint32_t chunk_size = packet.header.chunk_size;
     std::memcpy(buf.data() + CHUNK_SIZE_OFF, &chunk_size, sizeof(chunk_size));
+
+    if (is_v2) {
+        const uint32_t original_size = packet.header.original_size;
+        std::memcpy(buf.data() + ORIGINAL_SIZE_OFF, &original_size, sizeof(original_size));
+    }
 
     const uint16_t symbol_size = packet.header.symbol_size;
     std::memcpy(buf.data() + SYMBOL_SIZE_OFF, &symbol_size, sizeof(symbol_size));
@@ -223,10 +252,10 @@ bool Decoder::validate_packet_crc(const DecodedPacket &packet) {
     std::memcpy(buf.data() + PAYLOAD_LEN_OFF, &payload_len, sizeof(payload_len));
 
     constexpr uint32_t zero_crc = 0;
-    std::memcpy(buf.data() + CRC_OFF, &zero_crc, sizeof(zero_crc));
+    std::memcpy(buf.data() + crc_offset, &zero_crc, sizeof(zero_crc));
     const std::span<const std::byte> headerSpan(header.data(), header.size());
     const std::span payloadSpan(packet.payload.data(), packet.payload.size());
-    const uint32_t computed_crc = packet_crc32c(headerSpan, payloadSpan, CRC_OFF, CRC_SIZE);
+    const uint32_t computed_crc = packet_crc32c(headerSpan, payloadSpan, crc_offset, CRC_SIZE);
 
     return computed_crc == packet.header.crc;
 }
@@ -269,9 +298,11 @@ std::optional<ChunkDecodeResult> Decoder::process_packet(const std::span<const s
         ChunkDecodeResult result;
         result.chunk_index = hdr.chunk_index;
         result.data = decoder.get_decoded_data();
+        const uint32_t copy_len = std::min(static_cast<uint32_t>(result.data.size()), hdr.original_size);
+        result.data.resize(copy_len);
         result.sha256 = sha256(std::span<const std::byte>(result.data.data(), result.data.size()));
         result.success = true;
-        completed_chunks[hdr.chunk_index] = result.data;
+        completed_chunks[hdr.chunk_index] = std::move(result.data);
         active_decoders.erase(it);
 
         return result;
@@ -312,9 +343,11 @@ std::optional<ChunkDecodeResult> Decoder::process_packet(const DecodedPacket &pa
         ChunkDecodeResult result;
         result.chunk_index = hdr.chunk_index;
         result.data = decoder.get_decoded_data();
+        const uint32_t copy_len = std::min(static_cast<uint32_t>(result.data.size()), hdr.original_size);
+        result.data.resize(copy_len);
         result.sha256 = sha256(std::span<const std::byte>(result.data.data(), result.data.size()));
         result.success = true;
-        completed_chunks[hdr.chunk_index] = result.data;
+        completed_chunks[hdr.chunk_index] = std::move(result.data);
         active_decoders.erase(it);
 
         return result;

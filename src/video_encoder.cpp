@@ -138,7 +138,7 @@ void VideoEncoder::init_encoder(const std::string &output_path) {
 
 int VideoEncoder::packets_per_frame() {
     const auto layout = compute_frame_layout();
-    constexpr std::size_t packet_size = HEADER_SIZE + SYMBOL_SIZE_BYTES;
+    constexpr std::size_t packet_size = HEADER_SIZE_V2 + SYMBOL_SIZE_BYTES;
     return static_cast<int>(layout.bytes_per_frame / packet_size);
 }
 

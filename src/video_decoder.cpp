@@ -169,7 +169,13 @@ std::vector<std::vector<std::byte> > VideoDecoder::extract_packets_from_frame() 
     const auto raw_data = extract_data_from_frame();
     std::vector<std::vector<std::byte> > packets;
 
-    constexpr std::size_t packet_size = HEADER_SIZE + SYMBOL_SIZE_BYTES;
+    std::size_t packet_size = HEADER_SIZE + SYMBOL_SIZE_BYTES;
+    if (raw_data.size() >= 5) {
+        const uint8_t version = static_cast<uint8_t>(raw_data[4]);
+        if (version == VERSION_ID_V2) {
+            packet_size = HEADER_SIZE_V2 + SYMBOL_SIZE_BYTES;
+        }
+    }
     std::size_t offset = 0;
     while (offset + packet_size <= raw_data.size()) {
         if (offset + 4 <= raw_data.size()) {
