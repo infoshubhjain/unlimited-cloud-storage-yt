@@ -4,6 +4,8 @@
 
 # Media Storage
 
+[![Star History Chart](https://api.star-history.com/svg?repos=PulseBeat02/yt-media-storage&type=Date)](https://star-history.com/#PulseBeat02/yt-media-storage&Date)
+
 Stores files onto YouTube by encoding them into lossless video and decoding them back to the original file. Supports
 both a command-line interface and a graphical user interface.
 
