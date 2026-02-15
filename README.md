@@ -1,17 +1,20 @@
-[![CodeFactor](https://www.codefactor.io/repository/github/pulsebeat02/yt-media-storage/badge)](https://www.codefactor.io/repository/github/pulsebeat02/yt-media-storage)
-[![TeamCity Full Build Status](https://img.shields.io/teamcity/build/s/YtMediaStorage_Build?server=https%3A%2F%2Fci.brandonli.me
-)](https://ci.brandonli.me/project/YtMediaStorage)
-
-# Unlimited Cloud Storage (YouTube Edition)
-
-[![Star History Chart](https://api.star-history.com/svg?repos=PulseBeat02/yt-media-storage&type=date&legend=top-left)](https://www.star-history.com/#PulseBeat02/yt-media-storage&type=date&legend=top-left)
-
-**Explanation Video**: https://youtu.be/l03Os5uwWmk?si=xgZPNMrvs_aDcWE5  
-**YC Hacker News**: https://news.ycombinator.com/item?id=47012964
+# Unlimited Cloud Storage (YouTube Edition) 💎
 
 **Vault into YouTube** - Store any file as a lossless video on YouTube. Unlimited storage, zero costs, infinite redundancy.
-Stores files onto YouTube by encoding them into lossless video and decoding them back to the original file. Supports
-both a command-line interface and a graphical user interface.
+
+[![GitHub Pages](https://img.shields.io/badge/Live-Web%20App-blue?style=for-the-badge&logo=github)](https://infoshubhjain.github.io/unlimited-cloud-storage-yt/)
+[![License](https://img.shields.io/github/license/infoshubhjain/unlimited-cloud-storage-yt?style=for-the-badge)](LICENSE.txt)
+
+## 🌐 Web Application (V2.0)
+The fastest way to use this tool is via the web app. No installation required!
+- **[Launch the Web App](https://infoshubhjain.github.io/unlimited-cloud-storage-yt/)**
+- **Browser-Native**: Encodes files directly in your browser.
+- **Auto-Publish**: Connect your YouTube account to upload automatically.
+
+## 📦 What is this?
+This project encodes any file into a lossless video stream (FFV1/MKV) and allows you to upload it to YouTube. Because YouTube allows unlimited video uploads, you effectively get unlimited cloud storage. 
+
+Supports a modern **Web Interface**, a **Command-Line Interface (CLI)**, and a **Graphical User Interface (GUI)**.
 
 ## Features
 
