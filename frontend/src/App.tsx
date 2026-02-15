@@ -59,10 +59,66 @@ function App() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setFile(e.target.files[0]);
+      const selectedFile = e.target.files[0];
+      setFile(selectedFile);
       setEncodedVideo(null);
       setProgress(0);
       setUploadProgress(null);
+
+      // Reset status on new file
+      setStatus('Ready to secure your data');
+    }
+  };
+
+  const handleRetrieveVideoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const videoFile = e.target.files[0];
+      setIsRetrieving(true);
+      setStatus('Analyzing video container...');
+
+      try {
+        const ffmpeg = ffmpegRef.current;
+        await ffmpeg.writeFile('input_video.mkv', await fetchFile(videoFile));
+
+        setStatus('Extracting frames from video...');
+        // Extract frames at 1 fps (assuming 1 frame video for v1) or all frames
+        await ffmpeg.exec(['-i', 'input_video.mkv', 'frames_%03d.png']);
+
+        // Read the first frame (v1 simplified logic)
+        const frameData = await ffmpeg.readFile('frames_001.png');
+        const blob = new Blob([frameData], { type: 'image/png' });
+        const bitmap = await createImageBitmap(blob);
+
+        const canvas = canvasRef.current;
+        if (!canvas) throw new Error("No canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error("No context");
+        ctx.drawImage(bitmap, 0, 0);
+
+        setStatus('Decoding pixel data...');
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        // Import dynamically to avoid circular deps if any, or just use import
+        const { extractDataFromFrame } = await import('./logic/decoder');
+        const rawData = extractDataFromFrame(imageData.data, { width: canvas.width, height: canvas.height });
+
+        // In a real app, we'd look for magic bytes and packets.
+        // For this demo, we assume the raw extraction IS the file (simplified).
+        // Remove trailing zeros/padding if needed or just return blob.
+
+        const targetName = (document.getElementById('retrieve-filename') as HTMLInputElement)?.value || 'recovered_file.dat';
+        setDecodedFile({ name: targetName, blob: new Blob([rawData]) });
+
+        setStatus('File successfully reconstructed!');
+        setProgress(100);
+      } catch (err) {
+        console.error(err);
+        setStatus('Failed to decode video. Is it a valid vault file?');
+      } finally {
+        setIsRetrieving(false);
+      }
     }
   };
 
@@ -335,42 +391,70 @@ function App() {
                   </div>
 
                   <button
-                    disabled={!ytUrl || isRetrieving}
-                    onClick={() => {
-                      setIsRetrieving(true);
-                      setStatus('Fetching video from YouTube...');
-                      const targetName = (document.getElementById('retrieve-filename') as HTMLInputElement)?.value || 'vault_recovery.dat';
-
-                      // Simulation of retrieval & decoding
-                      setTimeout(() => {
-                        setStatus('Extracting data from frames...');
-                        setProgress(40);
-                        setTimeout(() => {
-                          setStatus('Reconstructing binary packets...');
-                          setProgress(80);
-                          setTimeout(() => {
-                            setStatus('Decryption complete!');
-                            setProgress(100);
-                            setIsRetrieving(false);
-                            setDecodedFile({ name: targetName, blob: new Blob(['mock data']) });
-                          }, 1500);
-                        }, 1500);
-                      }, 1500);
-                    }}
-                    className="w-full btn-primary disabled:opacity-30 flex items-center justify-center gap-2"
+                    onClick={() => document.getElementById('retrieve-upload')?.click()}
+                    className="w-full btn-primary flex items-center justify-center gap-2"
                   >
                     {isRetrieving ? (
                       <>
                         <Loader2 className="w-5 h-5 animate-spin" />
-                        Fetching & Decoding...
+                        Processing Video...
                       </>
                     ) : (
                       <>
-                        <ExternalLink className="w-5 h-5" />
-                        Recover Original File
+                        <FileVideo className="w-5 h-5" />
+                        Select Video to Decode
                       </>
                     )}
                   </button>
+                  <input
+                    type="file"
+                    id="retrieve-upload"
+                    accept="video/*,.mkv,.mp4"
+                    className="hidden"
+                    onChange={handleRetrieveVideoChange}
+                  />
+
+                  {/* Preview Area for Decoded File */}
+                  {decodedFile && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-4"
+                    >
+                      <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/20 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 rounded-lg bg-green-500/20 text-green-400">
+                            <CheckCircle2 className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-green-400">Restoration Complete</p>
+                            <p className="text-xs text-green-400/60">{decodedFile.name}</p>
+                          </div>
+                        </div>
+                        <a
+                          href={URL.createObjectURL(decodedFile.blob)}
+                          download={decodedFile.name}
+                          className="px-4 py-2 rounded-lg bg-green-500 text-black text-xs font-bold uppercase tracking-wider hover:bg-green-400 transition-colors"
+                        >
+                          Download
+                        </a>
+                      </div>
+
+                      {/* Inline Preview if Image */}
+                      {['png', 'jpg', 'jpeg', 'gif', 'webp'].some(ext => decodedFile.name.toLowerCase().endsWith(ext)) && (
+                        <div className="relative rounded-xl overflow-hidden border border-white/10 group">
+                          <img
+                            src={URL.createObjectURL(decodedFile.blob)}
+                            alt="Preview"
+                            className="w-full h-auto max-h-64 object-contain bg-black/50"
+                          />
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <p className="text-white text-sm font-bold tracking-widest uppercase">Decrypted Preview</p>
+                          </div>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
 
                   {isRetrieving && (
                     <div className="space-y-2">
