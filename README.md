@@ -138,6 +138,19 @@ This produces two executables:
 - **Frame Resolution**: 3840x2160 (4K) at 30 FPS
 - **Encryption**: Optional XChaCha20-Poly1305 via libsodium
 
+- **Encryption**: Optional XChaCha20-Poly1305 via libsodium
+
+## 🗝️ YouTube API Setup Guide
+To use the **Auto-Publish** feature in the web app, you must configure your own Google Cloud credentials:
+
+1.  **Create Project**: Go to [Google Cloud Console](https://console.cloud.google.com/) and create a new project.
+2.  **Enable API**: Go to **APIs & Services > Library**, search for **"YouTube Data API v3"**, and click **Enable**.
+3.  **Consent Screen**: Go to **OAuth consent screen**, choose **External**, and fill in the required app info. Add your email to **"Test Users"**.
+4.  **Create Credentials**: Go to **Credentials > Create Credentials > OAuth client ID**.
+    - Select **Web application**.
+    - Add `https://infoshubhjain.github.io` to **Authorized JavaScript origins**.
+5.  **Copy Client ID**: Paste the generated Client ID into the Web App's **Settings (gear icon)**.
+
 ## Troubleshooting
 
 ### Build Issues
