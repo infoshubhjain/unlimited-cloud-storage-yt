@@ -303,19 +303,34 @@ function App() {
                 </div>
 
                 <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] uppercase font-bold text-white/40 tracking-widest">
-                      YouTube Video URL
-                    </label>
-                    <div className="relative">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold text-white/40 tracking-widest">
+                        YouTube Video URL
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={ytUrl}
+                          onChange={(e) => setYtUrl(e.target.value)}
+                          placeholder="https://www.youtube.com/watch?v=..."
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 pr-12 text-sm focus:border-primary outline-none transition-colors"
+                        />
+                        <Youtube className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/10" />
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] uppercase font-bold text-white/40 tracking-widest">
+                        Save File As
+                      </label>
                       <input
                         type="text"
-                        value={ytUrl}
-                        onChange={(e) => setYtUrl(e.target.value)}
-                        placeholder="https://www.youtube.com/watch?v=..."
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 pr-12 text-sm focus:border-primary outline-none transition-colors"
+                        defaultValue="vault_recovery.dat"
+                        id="retrieve-filename"
+                        placeholder="original_name.ext"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-sm focus:border-primary outline-none transition-colors"
                       />
-                      <Youtube className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/10" />
                     </div>
                   </div>
 
@@ -324,6 +339,8 @@ function App() {
                     onClick={() => {
                       setIsRetrieving(true);
                       setStatus('Fetching video from YouTube...');
+                      const targetName = (document.getElementById('retrieve-filename') as HTMLInputElement)?.value || 'vault_recovery.dat';
+
                       // Simulation of retrieval & decoding
                       setTimeout(() => {
                         setStatus('Extracting data from frames...');
@@ -335,7 +352,7 @@ function App() {
                             setStatus('Decryption complete!');
                             setProgress(100);
                             setIsRetrieving(false);
-                            setDecodedFile({ name: 'retrieved_file.ext', blob: new Blob(['mock data']) });
+                            setDecodedFile({ name: targetName, blob: new Blob(['mock data']) });
                           }, 1500);
                         }, 1500);
                       }, 1500);
