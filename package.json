@@ -1,0 +1,14 @@
+{
+    "name": "yt-media-storage-root",
+    "private": true,
+    "scripts": {
+        "dev": "npm run dev --workspace=frontend",
+        "start": "npm install && npm run dev",
+        "build": "npm run build --workspace=frontend",
+        "preview": "npm run preview --workspace=frontend",
+        "frontend:install": "npm install --workspace=frontend"
+    },
+    "workspaces": [
+        "frontend"
+    ]
+}

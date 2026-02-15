@@ -2,13 +2,14 @@
 [![TeamCity Full Build Status](https://img.shields.io/teamcity/build/s/YtMediaStorage_Build?server=https%3A%2F%2Fci.brandonli.me
 )](https://ci.brandonli.me/project/YtMediaStorage)
 
-# Media Storage
+# Unlimited Cloud Storage (YouTube Edition)
 
 [![Star History Chart](https://api.star-history.com/svg?repos=PulseBeat02/yt-media-storage&type=date&legend=top-left)](https://www.star-history.com/#PulseBeat02/yt-media-storage&type=date&legend=top-left)
 
 **Explanation Video**: https://youtu.be/l03Os5uwWmk?si=xgZPNMrvs_aDcWE5  
 **YC Hacker News**: https://news.ycombinator.com/item?id=47012964
 
+**Vault into YouTube** - Store any file as a lossless video on YouTube. Unlimited storage, zero costs, infinite redundancy.
 Stores files onto YouTube by encoding them into lossless video and decoding them back to the original file. Supports
 both a command-line interface and a graphical user interface.
 
