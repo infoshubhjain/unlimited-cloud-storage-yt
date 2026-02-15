@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: '/yt-media-storage/', // For GH Pages deployment
+  base: '/unlimited-cloud-storage-yt/', // For GH Pages deployment
   server: {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
