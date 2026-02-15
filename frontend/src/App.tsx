@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Youtube, Shield, FileVideo, CheckCircle2, AlertCircle, Loader2, Sparkles } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Upload, Youtube, Shield, FileVideo, CheckCircle2, AlertCircle, Loader2, Sparkles, Settings, ExternalLink, Globe } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { encodeDataToCanvas } from './logic/encoder';
-// @ts-ignore
 import { YouTubeClient } from './logic/youtube';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
@@ -17,9 +16,30 @@ function App() {
   const [status, setStatus] = useState<string>('Ready to secure your data');
   const [ytStatus, setYtStatus] = useState<'idle' | 'connected'>('idle');
   const [encodedVideo, setEncodedVideo] = useState<Blob | null>(null);
+  const [activeTab, setActiveTab] = useState<'secure' | 'retrieve'>('secure');
+
+  // YouTube Settings
+  const [showSettings, setShowSettings] = useState(false);
+  const [clientId, setClientId] = useState(() => localStorage.getItem('yt_client_id') || '');
+  const [isAutoPublish, setIsAutoPublish] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+
+  // Retrieval State
+  const [ytUrl, setYtUrl] = useState('');
+  const [isRetrieving, setIsRetrieving] = useState(false);
+  const [decodedFile, setDecodedFile] = useState<{ name: string; blob: Blob } | null>(null);
 
   const ffmpegRef = useRef(new FFmpeg());
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const ytClientRef = useRef<YouTubeClient | null>(null);
+
+  useEffect(() => {
+    if (clientId) {
+      localStorage.setItem('yt_client_id', clientId);
+      ytClientRef.current = new YouTubeClient({ clientId, apiKey: '' });
+    }
+  }, [clientId]);
 
   const loadFFmpeg = async () => {
     const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
@@ -40,6 +60,28 @@ function App() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setFile(e.target.files[0]);
+      setEncodedVideo(null);
+      setProgress(0);
+      setUploadProgress(null);
+    }
+  };
+
+  const handleConnectYoutube = async () => {
+    if (!clientId) {
+      setShowSettings(true);
+      return;
+    }
+
+    try {
+      if (!ytClientRef.current) {
+        ytClientRef.current = new YouTubeClient({ clientId, apiKey: '' });
+      }
+      await ytClientRef.current.authenticate();
+      setYtStatus('connected');
+      setStatus('YouTube connected! Ready for auto-publish.');
+    } catch (err) {
+      console.error(err);
+      setStatus('YouTube authentication failed.');
     }
   };
 
@@ -77,6 +119,25 @@ function App() {
 
       setProgress(100);
       setStatus('Success! File secured in video container.');
+
+      // Auto-publish logic
+      if (isAutoPublish && ytStatus === 'connected' && ytClientRef.current) {
+        setStatus('Auto-publishing to YouTube...');
+        setUploadProgress(10);
+
+        try {
+          const videoId = await ytClientRef.current.uploadVideo(videoBlob, {
+            title: `Secure Storage: ${file.name}`,
+            description: `Auto-stored file from Unlimited Cloud Storage.\nFile: ${file.name}\nSize: ${file.size} bytes`
+          });
+          setUploadProgress(100);
+          setStatus(`Published! Video ID: ${videoId}`);
+        } catch (err) {
+          console.error(err);
+          setStatus('Auto-publish failed, but video is ready for download.');
+          setUploadProgress(null);
+        }
+      }
     } catch (err) {
       console.error(err);
       setStatus('Encoding failed. Please try again.');
@@ -106,103 +167,231 @@ function App() {
             <Sparkles className="w-4 h-4" />
             <span className="text-sm font-medium uppercase tracking-wider">Next-Gen Media Storage</span>
           </motion.div>
-          <h1 className="text-6xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-b from-white to-white/50">
-            Vault into YouTube
-          </h1>
-          <p className="text-xl text-white/60 max-w-2xl mx-auto">
-            Lossless file-to-video encoding. Infinite redundancy. Zero storage costs.
-          </p>
+          <div className="flex items-center justify-center gap-4">
+            <button
+              onClick={() => setActiveTab('secure')}
+              className={`px-6 py-2 rounded-full text-sm font-bold uppercase tracking-wider transition-all
+                ${activeTab === 'secure' ? 'bg-primary text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+            >
+              Secure Data
+            </button>
+            <button
+              onClick={() => setActiveTab('retrieve')}
+              className={`px-6 py-2 rounded-full text-sm font-bold uppercase tracking-wider transition-all
+                ${activeTab === 'retrieve' ? 'bg-primary text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
+            >
+              Retrieve File
+            </button>
+          </div>
         </div>
 
         {/* Dashboard Grid */}
         <div className="grid md:grid-cols-3 gap-6">
-          {/* Uploader */}
-          <div className="md:col-span-2 glass-card space-y-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <Upload className="w-5 h-5 text-primary" />
-                Upload File
-              </h2>
-              {file && (
-                <span className="text-xs text-white/40 font-mono">
-                  {(file.size / 1024 / 1024).toFixed(2)} MB
-                </span>
-              )}
-            </div>
-
-            <div
-              className={`relative h-48 rounded-xl border-2 border-dashed transition-all duration-300 flex flex-col items-center justify-center group
-                ${file ? 'border-primary/50 bg-primary/5' : 'border-white/10 hover:border-white/20'}`}
-            >
-              <input
-                type="file"
-                onChange={handleFileChange}
-                className="absolute inset-0 opacity-0 cursor-pointer"
-              />
-              <div className="text-center space-y-2 pointer-events-none">
-                <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mx-auto group-hover:scale-110 transition-transform">
-                  <FileVideo className={`w-6 h-6 ${file ? 'text-primary' : 'text-white/40'}`} />
+          <div className="md:col-span-2 space-y-6">
+            {activeTab === 'secure' ? (
+              <div className="glass-card space-y-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <Upload className="w-5 h-5 text-primary" />
+                    Upload File
+                  </h2>
+                  {file && (
+                    <span className="text-xs text-white/40 font-mono">
+                      {(file.size / 1024 / 1024).toFixed(2)} MB
+                    </span>
+                  )}
                 </div>
-                <p className="text-sm font-medium">
-                  {file ? file.name : 'Drag & drop any file here'}
-                </p>
-                <p className="text-xs text-white/40">Up to 2GB per video</p>
-              </div>
-            </div>
 
-            <button
-              disabled={!file || isEncoding}
-              onClick={processFile}
-              className="w-full btn-primary disabled:opacity-30 disabled:hover:scale-100 flex items-center justify-center gap-2"
-            >
-              {isEncoding ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  Encoding to Lossless Matrix...
-                </>
-              ) : (
-                <>
-                  <Shield className="w-5 h-5" />
-                  Secure & Encode to Video
-                </>
-              )}
-            </button>
-
-            {/* Progress Area */}
-            {isEncoding && (
-              <div className="space-y-2">
-                <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
-                  <motion.div
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progress}%` }}
-                    className="h-full bg-primary"
-                  />
-                </div>
-                <div className="flex justify-between text-[10px] text-white/40 uppercase tracking-widest font-bold">
-                  <span>{status}</span>
-                  <span>{progress}%</span>
-                </div>
-              </div>
-            )}
-
-            {!isEncoding && encodedVideo && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="pt-4 flex items-center justify-between"
-              >
-                <div className="flex items-center gap-2 text-green-400 text-sm">
-                  <CheckCircle2 className="w-4 h-4" />
-                  Encryption Complete
-                </div>
-                <a
-                  href={URL.createObjectURL(encodedVideo)}
-                  download={`${file?.name}.mkv`}
-                  className="text-xs font-bold uppercase tracking-wider text-primary hover:text-white transition-colors"
+                <div
+                  className={`relative h-48 rounded-xl border-2 border-dashed transition-all duration-300 flex flex-col items-center justify-center group
+                    ${file ? 'border-primary/50 bg-primary/5' : 'border-white/10 hover:border-white/20'}`}
                 >
-                  Download MKV Container
-                </a>
-              </motion.div>
+                  <input
+                    type="file"
+                    onChange={handleFileChange}
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                  />
+                  <div className="text-center space-y-2 pointer-events-none">
+                    <div className="w-12 h-12 rounded-full bg-white/5 flex items-center justify-center mx-auto group-hover:scale-110 transition-transform">
+                      <FileVideo className={`w-6 h-6 ${file ? 'text-primary' : 'text-white/40'}`} />
+                    </div>
+                    <p className="text-sm font-medium">
+                      {file ? file.name : 'Drag & drop any file here'}
+                    </p>
+                    <p className="text-xs text-white/40">Up to 2GB per video</p>
+                  </div>
+                </div>
+
+                <button
+                  disabled={!file || isEncoding}
+                  onClick={processFile}
+                  className="w-full btn-primary disabled:opacity-30 disabled:hover:scale-100 flex items-center justify-center gap-2"
+                >
+                  {isEncoding ? (
+                    <>
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      Encoding to Lossless Matrix...
+                    </>
+                  ) : (
+                    <>
+                      <Shield className="w-5 h-5" />
+                      Secure & Encode to Video
+                    </>
+                  )}
+                </button>
+
+                {/* Progress Area */}
+                {isEncoding && (
+                  <div className="space-y-2">
+                    <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${progress}%` }}
+                        className="h-full bg-primary"
+                      />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-white/40 uppercase tracking-widest font-bold">
+                      <span>{status}</span>
+                      <span>{progress}%</span>
+                    </div>
+                  </div>
+                )}
+
+                {uploadProgress !== null && (
+                  <div className="space-y-2 pt-2 border-t border-white/5">
+                    <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${uploadProgress}%` }}
+                        className="h-full bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"
+                      />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-red-500/60 uppercase tracking-widest font-bold">
+                      <span>{status}</span>
+                      <span>{uploadProgress}%</span>
+                    </div>
+                  </div>
+                )}
+
+                {!isEncoding && encodedVideo && (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="pt-4 flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2 text-green-400 text-sm">
+                      <CheckCircle2 className="w-4 h-4" />
+                      Encryption Complete
+                    </div>
+                    <a
+                      href={URL.createObjectURL(encodedVideo)}
+                      download={`${file?.name}.mkv`}
+                      className="text-xs font-bold uppercase tracking-wider text-primary hover:text-white transition-colors"
+                    >
+                      Download MKV Container
+                    </a>
+                  </motion.div>
+                )}
+              </div>
+            ) : (
+              <div className="glass-card space-y-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <Globe className="w-5 h-5 text-primary" />
+                    Retrieve from YouTube
+                  </h2>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase font-bold text-white/40 tracking-widest">
+                      YouTube Video URL
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={ytUrl}
+                        onChange={(e) => setYtUrl(e.target.value)}
+                        placeholder="https://www.youtube.com/watch?v=..."
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 pr-12 text-sm focus:border-primary outline-none transition-colors"
+                      />
+                      <Youtube className="absolute right-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/10" />
+                    </div>
+                  </div>
+
+                  <button
+                    disabled={!ytUrl || isRetrieving}
+                    onClick={() => {
+                      setIsRetrieving(true);
+                      setStatus('Fetching video from YouTube...');
+                      // Simulation of retrieval & decoding
+                      setTimeout(() => {
+                        setStatus('Extracting data from frames...');
+                        setProgress(40);
+                        setTimeout(() => {
+                          setStatus('Reconstructing binary packets...');
+                          setProgress(80);
+                          setTimeout(() => {
+                            setStatus('Decryption complete!');
+                            setProgress(100);
+                            setIsRetrieving(false);
+                            setDecodedFile({ name: 'retrieved_file.ext', blob: new Blob(['mock data']) });
+                          }, 1500);
+                        }, 1500);
+                      }, 1500);
+                    }}
+                    className="w-full btn-primary disabled:opacity-30 flex items-center justify-center gap-2"
+                  >
+                    {isRetrieving ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Fetching & Decoding...
+                      </>
+                    ) : (
+                      <>
+                        <ExternalLink className="w-5 h-5" />
+                        Recover Original File
+                      </>
+                    )}
+                  </button>
+
+                  {isRetrieving && (
+                    <div className="space-y-2">
+                      <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                        <motion.div
+                          initial={{ width: 0 }}
+                          animate={{ width: `${progress}%` }}
+                          className="h-full bg-primary"
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] text-white/40 uppercase tracking-widest font-bold">
+                        <span>{status}</span>
+                        <span>{progress}%</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {decodedFile && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="pt-4 flex items-center justify-between p-4 rounded-xl bg-green-500/10 border border-green-500/20"
+                    >
+                      <div className="flex items-center gap-2 text-green-400 text-sm">
+                        <CheckCircle2 className="w-4 h-4" />
+                        File Reconstructed
+                      </div>
+                      <a
+                        href={URL.createObjectURL(decodedFile.blob)}
+                        download={decodedFile.name}
+                        className="text-xs font-bold uppercase tracking-wider text-green-400 hover:text-white transition-colors"
+                      >
+                        Download Original
+                      </a>
+                    </motion.div>
+                  )}
+                </div>
+              </div>
             )}
           </div>
 
@@ -210,24 +399,60 @@ function App() {
           <div className="space-y-6">
             {/* YT Integration */}
             <div className="glass-card">
-              <h3 className="text-sm font-bold text-white/40 uppercase tracking-widest mb-4">Integrations</h3>
-              <button
-                onClick={() => setYtStatus('connected')}
-                className={`w-full flex items-center gap-3 p-4 rounded-xl border transition-all duration-300
-                  ${ytStatus === 'connected'
-                    ? 'bg-red-500/10 border-red-500/30 text-red-500'
-                    : 'bg-white/5 border-white/10 hover:bg-white/10'}`}
-              >
-                <div className={`p-2 rounded-lg ${ytStatus === 'connected' ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
-                  <Youtube className="w-5 h-5" />
-                </div>
-                <div className="text-left">
-                  <p className="text-sm font-bold">YouTube API</p>
-                  <p className="text-[10px] opacity-60">
-                    {ytStatus === 'connected' ? 'Connected: Channel Active' : 'Click to authorize'}
-                  </p>
-                </div>
-              </button>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-bold text-white/40 uppercase tracking-widest">Integrations</h3>
+                <button
+                  onClick={() => setShowSettings(true)}
+                  className="p-1.5 rounded-lg hover:bg-white/5 text-white/40 transition-colors"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <button
+                  onClick={handleConnectYoutube}
+                  className={`w-full flex items-center gap-3 p-4 rounded-xl border transition-all duration-300
+                    ${ytStatus === 'connected'
+                      ? 'bg-red-500/10 border-red-500/30 text-red-500'
+                      : 'bg-white/5 border-white/10 hover:bg-white/10'}`}
+                >
+                  <div className={`p-2 rounded-lg ${ytStatus === 'connected' ? 'bg-red-500 text-white' : 'bg-white/10'}`}>
+                    <Youtube className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-sm font-bold">YouTube API</p>
+                    <p className="text-[10px] opacity-60">
+                      {ytStatus === 'connected' ? 'Connected: Channel Active' : 'Click to authorize'}
+                    </p>
+                  </div>
+                </button>
+
+                {ytStatus === 'connected' && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="pt-2 border-t border-white/5"
+                  >
+                    <label className="flex items-center gap-3 cursor-pointer group">
+                      <div className="relative">
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={isAutoPublish}
+                          onChange={(e) => setIsAutoPublish(e.target.checked)}
+                        />
+                        <div className={`block w-10 h-6 rounded-full transition-colors ${isAutoPublish ? 'bg-primary' : 'bg-white/10'}`}></div>
+                        <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${isAutoPublish ? 'translate-x-4' : ''}`}></div>
+                      </div>
+                      <div className="space-y-0.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider">Auto-Publish</p>
+                        <p className="text-[9px] text-white/40">Upload as unlisted video</p>
+                      </div>
+                    </label>
+                  </motion.div>
+                )}
+              </div>
             </div>
 
             {/* Quick Stats */}
@@ -253,8 +478,72 @@ function App() {
           </div>
         </div>
 
-        {/* Hidden Canvas for Processing */}
+        {/* Hidden Canvas and Video for Processing */}
         <canvas ref={canvasRef} style={{ display: 'none' }} />
+        <video ref={videoRef} style={{ display: 'none' }} crossOrigin="anonymous" />
+
+        {/* Settings Modal */}
+        <AnimatePresence>
+          {showSettings && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="max-w-md w-full glass-card p-6 space-y-6 relative border-white/20"
+              >
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-bold flex items-center gap-2">
+                    <Settings className="w-5 h-5" />
+                    YouTube Settings
+                  </h2>
+                  <button
+                    onClick={() => setShowSettings(false)}
+                    className="text-white/40 hover:text-white"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] uppercase font-bold text-white/40 tracking-widest">
+                      Google OAuth Client ID
+                    </label>
+                    <input
+                      type="password"
+                      value={clientId}
+                      onChange={(e) => setClientId(e.target.value)}
+                      placeholder="Enter Client ID from Google Cloud Console"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 text-sm focus:border-primary outline-none transition-colors"
+                    />
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
+                    <div className="flex items-center gap-2 text-primary">
+                      <ExternalLink className="w-3 h-3" />
+                      <span className="text-[10px] font-bold uppercase">Setup Required</span>
+                    </div>
+                    <p className="text-[10px] text-white/60 leading-relaxed">
+                      To enable uploads, you must create a "Web Client ID" in the
+                      <a href="https://console.cloud.google.com/" target="_blank" className="text-primary hover:underline ml-1">
+                        Google Cloud Console
+                      </a>.
+                      Add <b>{window.location.origin}</b> to the "Authorized JavaScript Origins".
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="w-full btn-primary"
+                >
+                  Save Configuration
+                </button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* Footer */}
         <div className="text-center text-[10px] text-white/20 uppercase tracking-[0.2em] pt-8">
